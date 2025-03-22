@@ -10,7 +10,8 @@
 #include "proxies/Streamline_Proxy.h"
 #include "inputs/FSR2_Dx12.h"
 #include "inputs/FSR3_Dx12.h"
-
+#include "proxies/XeLL_Proxy.h"
+#include "proxies/XeFG_Proxy.h"
 #include "hooks/HooksDx.h"
 #include "hooks/HooksVk.h"
 
@@ -108,6 +109,11 @@ inline std::vector<std::string> fsr3Names = { "ffx_fsr3upscaler_x64.dll", "ffx_f
 inline std::vector<std::wstring> fsr3NamesW = { L"ffx_fsr3upscaler_x64.dll", L"ffx_fsr3upscaler_x64" };
 inline std::vector<std::string> fsr3BENames = { "ffx_backend_dx12_x64.dll", "ffx_backend_dx12_x64" };
 inline std::vector<std::wstring> fsr3BENamesW = { L"ffx_backend_dx12_x64.dll", L"ffx_backend_dx12_x64" };
+
+inline std::vector<std::string> xellNames = { "libxell.dll", "libxell" };
+inline std::vector<std::wstring> xellNamesW = { L"libxell.dll", L"libxell" };
+inline std::vector<std::string> xefgNames = { "libxess_fg.dll", "libxess_fg" };
+inline std::vector<std::wstring> xefgNamesW = { L"libxess_fg.dll", L"libxess_fg" };
 
 static int loadCount = 0;
 static bool dontCount = false;
@@ -362,6 +368,40 @@ inline static HMODULE LoadLibraryCheck(std::string lcaseLibName, LPCSTR lpLibFul
         return module;
     }
 
+    // Add XeLL library detection
+    if (CheckDllName(&lcaseLibName, &xellNames))
+    {
+        State::Instance().skipDllLoadChecks = true;
+    
+        auto module = o_LoadLibraryA(lpLibFullPath);
+        if (module != nullptr)
+        {
+            LOG_INFO("XeLL library loaded: {}", lcaseLibName);
+            State::Instance().XeLLIsActive = true;
+        }
+    
+        State::Instance().skipDllLoadChecks = false;
+    
+        return module;
+    }
+
+    // Add XeFG library detection
+    if (CheckDllName(&lcaseLibName, &xefgNames))
+    {
+        State::Instance().skipDllLoadChecks = true;
+    
+        auto module = o_LoadLibraryA(lpLibFullPath);
+        if (module != nullptr)
+        {
+            LOG_INFO("XeFG library loaded: {}", lcaseLibName);
+            State::Instance().XeFgIsActive = true;
+        }
+    
+        State::Instance().skipDllLoadChecks = false;
+    
+        return module;
+    }
+
     return nullptr;
 }
 
@@ -571,6 +611,40 @@ inline static HMODULE LoadLibraryCheckW(std::wstring lcaseLibName, LPCWSTR lpLib
 
         State::Instance().skipDllLoadChecks = false;
 
+        return module;
+    }
+
+    // Add XeLL library detection
+    if (CheckDllNameW(&lcaseLibName, &xellNamesW))
+    {
+        State::Instance().skipDllLoadChecks = true;
+    
+        auto module = o_LoadLibraryW(lpLibFullPath);
+        if (module != nullptr)
+        {
+            LOG_INFO("XeLL library loaded: {}", wstring_to_string(lcaseLibName));
+            State::Instance().XeLLIsActive = true;
+        }
+    
+        State::Instance().skipDllLoadChecks = false;
+    
+        return module;
+    }
+
+    // Add XeFG library detection
+    if (CheckDllNameW(&lcaseLibName, &xefgNamesW))
+    {
+        State::Instance().skipDllLoadChecks = true;
+    
+        auto module = o_LoadLibraryW(lpLibFullPath);
+        if (module != nullptr)
+        {
+            LOG_INFO("XeFG library loaded: {}", wstring_to_string(lcaseLibName));
+            State::Instance().XeFgIsActive = true;
+        }
+    
+        State::Instance().skipDllLoadChecks = false;
+    
         return module;
     }
 
@@ -2155,6 +2229,29 @@ static void CheckWorkingMode()
             if (Config::Instance()->OverlayMenu.value() && dxgiModule != nullptr)
                 HooksDx::HookDxgi();
 
+            // Check if XeLL is already loaded
+            HMODULE xellModule = nullptr;
+            xellModule = GetModuleHandle(xellNamesW[0].c_str());
+            if (xellModule != nullptr)
+            {
+                LOG_DEBUG("libxell.dll already in memory");
+                XeLLProxy::InitXeLL(); // Actually initialize XeLL
+                State::Instance().XeLLIsActive = true;
+            }
+
+            // Check if XeFG is already loaded
+            HMODULE xefgModule = nullptr;
+            xefgModule = GetModuleHandle(xefgNamesW[0].c_str());
+            if (xefgModule != nullptr)
+            {
+                LOG_DEBUG("libxess_fg.dll already in memory");
+                XeFGProxy::InitXeFG(); // Actually initialize XeFG
+                State::Instance().XeFgIsActive = true;
+            }
+            if (XeLLProxy::IsInitialized() && XeFGProxy::IsInitialized()) {
+                Config::Instance()->XeFGEnabled.set_volatile_value(true);
+                LOG_INFO("Intel XeSS-FG libraries detected and enabled");
+            }
             if (!isWorkingWithEnabler && (!Config::Instance()->FGUseFGSwapChain.value_or_default() || !Config::Instance()->OverlayMenu.value_or_default()) &&
                 skHandle == nullptr && Config::Instance()->LoadSpecialK.value_or_default())
             {
@@ -2264,6 +2361,8 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call, LPVOID lpReserv
             spdlog::warn("DO NOT USE IN MULTIPLAYER GAMES");
             spdlog::warn("");
             spdlog::warn("LogLevel: {0}", Config::Instance()->LogLevel.value_or_default());
+            Config::Instance()->XeFGEnabled.set_volatile_value(true);
+            Config::Instance()->FGUseFGSwapChain.set_volatile_value(false);
 
             // Check for Wine
             skipGetModuleHandle = true;
@@ -2325,7 +2424,7 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call, LPVOID lpReserv
             //if (!XeSSProxy::InitXeSS())
             //    spdlog::warn("Can't init XeSS!");
 
-            // Init FfxApi proxy
+
             if (!FfxApiProxy::InitFfxDx12())
                 spdlog::warn("Can't init Dx12 FfxApi!");
 
@@ -2353,14 +2452,45 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call, LPVOID lpReserv
             if (handle != nullptr)
                 HookFSR3Dx12Inputs(handle);
 
+            // Add XeLL library detection
+            spdlog::info("");
+            handle = GetModuleHandle(xellNamesW[0].c_str());
+            if (handle != nullptr)
+            {
+                spdlog::info("XeLL library already loaded");
+                State::Instance().XeLLIsActive = true;
+            }
+
+            // Add XeFG library detection
+            handle = GetModuleHandle(xefgNamesW[0].c_str());
+            if (handle != nullptr)
+            {
+                spdlog::info("XeFG library already loaded");
+                State::Instance().XeFgIsActive = true;
+            }
+
             HookFSR3ExeInputs();
 
             State::Instance().skipDllLoadChecks = false;
+            // Init FfxApi proxy
+            // Add these explicit initialization calls
+            LOG_INFO("Attempting to initialize XeLL proxy");
+            if (!XeLLProxy::InitXeLL())
+                LOG_WARN("Failed to initialize XeLL proxy");
+            else
+                LOG_INFO("XeLL proxy initialized successfully");
 
+            LOG_INFO("Attempting to initialize XeFG proxy");
+            if (!XeFGProxy::InitXeFG())
+                LOG_WARN("Failed to initialize XeFG proxy");
+            else
+                LOG_INFO("XeFG proxy initialized successfully");
             // Initial state of FSR-FG
             State::Instance().FsrFgIsActive = Config::Instance()->FGUseFGSwapChain.value_or_default();
             State::Instance().DLSSGIsActive = Config::Instance()->DLSSGMod.value_or_default();
-
+            // Add initial state for XeFG and XeLL
+            State::Instance().XeFgIsActive = Config::Instance()->XeFGEnabled.value_or_default();
+            State::Instance().XeLLIsActive = XeLLProxy::IsInitialized();
             for (size_t i = 0; i < 300; i++)
             {
                 State::Instance().frameTimes.push_back(0.0f);
@@ -2381,6 +2511,18 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call, LPVOID lpReserv
             unhookStreamline();
             unhookGdi32();
             DetachHooks();
+            // Add cleanup for XeLL and XeFG
+            if (State::Instance().XeLLContext != nullptr && XeLLProxy::DestroyContext())
+            {
+                XeLLProxy::DestroyContext()(State::Instance().XeLLContext);
+                State::Instance().XeLLContext = nullptr;
+            }
+
+            if (State::Instance().XeFgSwapChain != nullptr && XeFGProxy::Destroy())
+            {
+                XeFGProxy::Destroy()(State::Instance().XeFgSwapChain);
+                State::Instance().XeFgSwapChain = nullptr;
+            }
 
             if (skHandle != nullptr)
                 FreeLibrary(skHandle);

@@ -16,7 +16,8 @@
 #include <detours/detours.h>
 
 #include <d3d11on12.h>
-
+#include <proxies/XeFG_Proxy.h>
+#include <framegen/XeFG_Dx12.h>
 #pragma region FG definitions
 
 // Is FG mutex accuired for Half/Full sync?
@@ -147,7 +148,7 @@ static HRESULT hkFGPresent(void* This, UINT SyncInterval, UINT Flags)
         fg = reinterpret_cast<IFGFeature_Dx12*>(State::Instance().currentFG);
 
     auto lockAccuired = false;
-    if (!(Flags & DXGI_PRESENT_TEST || Flags & DXGI_PRESENT_RESTART) && fg != nullptr && fg->IsActive() && 
+    if (!(Flags & DXGI_PRESENT_TEST || Flags & DXGI_PRESENT_RESTART) && fg != nullptr && fg->IsActive() &&
         fg->TargetFrame() < fg->FrameCount() && Config::Instance()->FGUseMutexForSwaphain.value_or_default()) // && fg->Mutex.getOwner() != 2)
     {
         LOG_TRACE("Waiting FG->Mutex 2, current: {}", fg->Mutex.getOwner());
@@ -295,7 +296,7 @@ static HRESULT Present(IDXGISwapChain* pSwapChain, UINT SyncInterval, UINT Flags
         HooksDx::dx12UpscaleTrig = false;
     }
     else if (HooksDx::dx11UpscaleTrig[HooksDx::currentFrameIndex] && device != nullptr && HooksDx::disjointQueries[0] != nullptr &&
-             HooksDx::startQueries[0] != nullptr && HooksDx::endQueries[0] != nullptr)
+        HooksDx::startQueries[0] != nullptr && HooksDx::endQueries[0] != nullptr)
     {
         if (_d3d11DeviceContext == nullptr)
             device->GetImmediateContext(&_d3d11DeviceContext);
@@ -523,7 +524,7 @@ static HRESULT hkCreateSwapChain(IDXGIFactory* pFactory, IUnknown* pDevice, DXGI
 
         if (pDesc != nullptr)
             LOG_DEBUG("Width: {}, Height: {}, Format: {:X}, Count: {}, Hwnd: {:X}, Windowed: {}, SkipWrapping: {}",
-                      pDesc->BufferDesc.Width, pDesc->BufferDesc.Height, (UINT)pDesc->BufferDesc.Format, pDesc->BufferCount, (UINT)pDesc->OutputWindow, pDesc->Windowed, _skipFGSwapChainCreation);
+                pDesc->BufferDesc.Width, pDesc->BufferDesc.Height, (UINT)pDesc->BufferDesc.Format, pDesc->BufferCount, (UINT)pDesc->OutputWindow, pDesc->Windowed, _skipFGSwapChainCreation);
 
         State::Instance().skipDxgiLoadChecks = true;
         auto res = oCreateSwapChain(pFactory, pDevice, pDesc, ppSwapChain);
@@ -550,7 +551,7 @@ static HRESULT hkCreateSwapChain(IDXGIFactory* pFactory, IUnknown* pDevice, DXGI
     }
 
     LOG_DEBUG("Width: {}, Height: {}, Format: {:X}, Count: {}, Hwnd: {:X}, Windowed: {}, SkipWrapping: {}",
-              pDesc->BufferDesc.Width, pDesc->BufferDesc.Height, (UINT)pDesc->BufferDesc.Format, pDesc->BufferCount, (UINT)pDesc->OutputWindow, pDesc->Windowed, _skipFGSwapChainCreation);
+        pDesc->BufferDesc.Width, pDesc->BufferDesc.Height, (UINT)pDesc->BufferDesc.Format, pDesc->BufferCount, (UINT)pDesc->OutputWindow, pDesc->Windowed, _skipFGSwapChainCreation);
 
     // Crude implementation of EndlesslyFlowering's AutoHDR-ReShade
     // https://github.com/EndlesslyFlowering/AutoHDR-ReShade
@@ -577,15 +578,43 @@ static HRESULT hkCreateSwapChain(IDXGIFactory* pFactory, IUnknown* pDevice, DXGI
     }
 
     ID3D12CommandQueue* cq = nullptr;
-    if (Config::Instance()->OverlayMenu.value_or_default() && Config::Instance()->FGUseFGSwapChain.value_or_default() &&
-        !_skipFGSwapChainCreation && FfxApiProxy::InitFfxDx12() && pDevice->QueryInterface(IID_PPV_ARGS(&cq)) == S_OK)
+    LOG_DEBUG("FG Creation conditional check: FGUseFGSwapChain={}, XeFGEnabled={}, skipFGSwapChainCreation={}",
+        Config::Instance()->FGUseFGSwapChain.value_or_default(),
+        Config::Instance()->XeFGEnabled.value_or_default(),
+        _skipFGSwapChainCreation);
+
+    // 2. Inside the conditional block (after the if statement passes)
+    if (Config::Instance()->OverlayMenu.value_or_default() && Config::Instance()->XeFGEnabled.value_or_default() &&
+        !_skipFGSwapChainCreation && XeFGProxy::InitXeFG() && pDevice->QueryInterface(IID_PPV_ARGS(&cq)) == S_OK && FfxApiProxy::InitFfxDx12())
     {
-        cq->SetName(L"GameQueue");
+        cq->SetName(L"GameQueueHwnd");
         cq->Release();
 
+        LOG_DEBUG("Inside FG creation block");
+
+        // 3. Add detailed logs for XeFG initialization check
+        LOG_DEBUG("XeFG check: XeFGEnabled={}, XeFGProxy::IsInitialized()={}",
+            Config::Instance()->XeFGEnabled.value_or_default(),
+            XeFGProxy::IsInitialized());
+
+        // 4. If possible, check the actual library initialization
+        LOG_DEBUG("XeFG library status: DLL loaded={}", XeFGProxy::Version().major > 0);
+
         // FG Init
-        if (State::Instance().currentFG == nullptr)
-            State::Instance().currentFG = new FSRFG_Dx12();
+        if (State::Instance().currentFG == nullptr) {
+            if (Config::Instance()->XeFGEnabled.value_or_default() && XeFGProxy::IsInitialized()) {
+                LOG_INFO("Using XeSS Frame Generation");
+                State::Instance().currentFG = new XeFG_Dx12();
+            }
+            else {
+                LOG_INFO("Using FSR Frame Generation");
+                State::Instance().currentFG = new FSRFG_Dx12();
+            }
+        }
+        else {
+            LOG_DEBUG("State::Instance().currentFG already exists: {}",
+                (dynamic_cast<XeFG_Dx12*>(State::Instance().currentFG) != nullptr) ? "XeFG_Dx12" : "FSRFG_Dx12");
+        }
 
         HooksDx::ReleaseDx12SwapChain(pDesc->OutputWindow);
 
@@ -784,7 +813,7 @@ static HRESULT hkCreateSwapChain(IDXGIFactory* pFactory, IUnknown* pDevice, DXGI
 }
 
 static HRESULT hkCreateSwapChainForHwnd(IDXGIFactory* This, IUnknown* pDevice, HWND hWnd, DXGI_SWAP_CHAIN_DESC1* pDesc,
-                                        DXGI_SWAP_CHAIN_FULLSCREEN_DESC* pFullscreenDesc, IDXGIOutput* pRestrictToOutput, IDXGISwapChain1** ppSwapChain)
+    DXGI_SWAP_CHAIN_FULLSCREEN_DESC* pFullscreenDesc, IDXGIOutput* pRestrictToOutput, IDXGISwapChain1** ppSwapChain)
 {
     LOG_FUNC();
 
@@ -815,7 +844,7 @@ static HRESULT hkCreateSwapChainForHwnd(IDXGIFactory* This, IUnknown* pDevice, H
     }
 
     LOG_DEBUG("Width: {}, Height: {}, Format: {:X}, Count: {}, Hwnd: {:X}, SkipWrapping: {}",
-              pDesc->Width, pDesc->Height, (UINT)pDesc->Format, pDesc->BufferCount, (UINT)hWnd, _skipFGSwapChainCreation);
+        pDesc->Width, pDesc->Height, (UINT)pDesc->Format, pDesc->BufferCount, (UINT)hWnd, _skipFGSwapChainCreation);
 
     if (Config::Instance()->ForceHDR.value_or_default() && !_skipFGSwapChainCreation)
     {
@@ -840,14 +869,43 @@ static HRESULT hkCreateSwapChainForHwnd(IDXGIFactory* This, IUnknown* pDevice, H
     }
 
     ID3D12CommandQueue* cq = nullptr;
-    if (Config::Instance()->FGUseFGSwapChain.value_or_default() && !_skipFGSwapChainCreation && FfxApiProxy::InitFfxDx12() && pDevice->QueryInterface(IID_PPV_ARGS(&cq)) == S_OK)
+    LOG_DEBUG("FG Creation conditional check: FGUseFGSwapChain={}, XeFGEnabled={}, skipFGSwapChainCreation={}",
+        Config::Instance()->FGUseFGSwapChain.value_or_default(),
+        Config::Instance()->XeFGEnabled.value_or_default(),
+        _skipFGSwapChainCreation);
+
+    // 2. Inside the conditional block (after the if statement passes)
+    if (Config::Instance()->OverlayMenu.value_or_default() && Config::Instance()->XeFGEnabled.value_or_default() &&
+        !_skipFGSwapChainCreation && XeFGProxy::InitXeFG() && pDevice->QueryInterface(IID_PPV_ARGS(&cq)) == S_OK && FfxApiProxy::InitFfxDx12())
     {
         cq->SetName(L"GameQueueHwnd");
         cq->Release();
 
+        LOG_DEBUG("Inside FG creation block");
+
+        // 3. Add detailed logs for XeFG initialization check
+        LOG_DEBUG("XeFG check: XeFGEnabled={}, XeFGProxy::IsInitialized()={}",
+            Config::Instance()->XeFGEnabled.value_or_default(),
+            XeFGProxy::IsInitialized());
+
+        // 4. If possible, check the actual library initialization
+        LOG_DEBUG("XeFG library status: DLL loaded={}", XeFGProxy::Version().major > 0);
+
         // FG Init
-        if (State::Instance().currentFG == nullptr)
-            State::Instance().currentFG = new FSRFG_Dx12();
+        if (State::Instance().currentFG == nullptr) {
+            if (Config::Instance()->XeFGEnabled.value_or_default() && XeFGProxy::IsInitialized()) {
+                LOG_INFO("Using XeSS Frame Generation");
+                State::Instance().currentFG = new XeFG_Dx12();
+            }
+            else {
+                LOG_INFO("Using FSR Frame Generation");
+                State::Instance().currentFG = new FSRFG_Dx12();
+            }
+        }
+        else {
+            LOG_DEBUG("State::Instance().currentFG already exists: {}",
+                (dynamic_cast<XeFG_Dx12*>(State::Instance().currentFG) != nullptr) ? "XeFG_Dx12" : "FSRFG_Dx12");
+        }
 
         HooksDx::ReleaseDx12SwapChain(hWnd);
 
@@ -1303,7 +1361,7 @@ static void HookToDevice(ID3D11Device* InDevice)
 }
 
 static HRESULT hkD3D11On12CreateDevice(IUnknown* pDevice, UINT Flags, D3D_FEATURE_LEVEL* pFeatureLevels, UINT FeatureLevels, IUnknown** ppCommandQueues,
-                                       UINT NumQueues, UINT NodeMask, ID3D11Device** ppDevice, ID3D11DeviceContext** ppImmediateContext, D3D_FEATURE_LEVEL* pChosenFeatureLevel)
+    UINT NumQueues, UINT NodeMask, ID3D11Device** ppDevice, ID3D11DeviceContext** ppImmediateContext, D3D_FEATURE_LEVEL* pChosenFeatureLevel)
 {
     LOG_FUNC();
 
@@ -1341,7 +1399,7 @@ static HRESULT hkD3D11On12CreateDevice(IUnknown* pDevice, UINT Flags, D3D_FEATUR
 }
 
 static HRESULT hkD3D11CreateDevice(IDXGIAdapter* pAdapter, D3D_DRIVER_TYPE DriverType, HMODULE Software, UINT Flags, CONST D3D_FEATURE_LEVEL* pFeatureLevels,
-                                   UINT FeatureLevels, UINT SDKVersion, ID3D11Device** ppDevice, D3D_FEATURE_LEVEL* pFeatureLevel, ID3D11DeviceContext** ppImmediateContext)
+    UINT FeatureLevels, UINT SDKVersion, ID3D11Device** ppDevice, D3D_FEATURE_LEVEL* pFeatureLevel, ID3D11DeviceContext** ppImmediateContext)
 {
     LOG_FUNC();
 
@@ -1389,7 +1447,7 @@ static HRESULT hkD3D11CreateDevice(IDXGIAdapter* pAdapter, D3D_DRIVER_TYPE Drive
 }
 
 static HRESULT hkD3D11CreateDeviceAndSwapChain(IDXGIAdapter* pAdapter, D3D_DRIVER_TYPE DriverType, HMODULE Software, UINT Flags, CONST D3D_FEATURE_LEVEL* pFeatureLevels,
-                                               UINT FeatureLevels, UINT SDKVersion, DXGI_SWAP_CHAIN_DESC* pSwapChainDesc, IDXGISwapChain** ppSwapChain, ID3D11Device** ppDevice, D3D_FEATURE_LEVEL* pFeatureLevel, ID3D11DeviceContext** ppImmediateContext)
+    UINT FeatureLevels, UINT SDKVersion, DXGI_SWAP_CHAIN_DESC* pSwapChainDesc, IDXGISwapChain** ppSwapChain, ID3D11Device** ppDevice, D3D_FEATURE_LEVEL* pFeatureLevel, ID3D11DeviceContext** ppImmediateContext)
 {
     LOG_FUNC();
 
@@ -1576,7 +1634,7 @@ static HRESULT hkD3D12CreateDevice(IDXGIAdapter* pAdapter, D3D_FEATURE_LEVEL Min
         LOG_WARN("GPU Based Validation active!");
         debugController->SetEnableGPUBasedValidation(TRUE);
 #endif
-}
+    }
 #endif
 
     //State::Instance().skipSpoofing = true;
@@ -1616,7 +1674,7 @@ static HRESULT hkD3D12CreateDevice(IDXGIAdapter* pAdapter, D3D_FEATURE_LEVEL Min
                 LOG_DEBUG("infoQueue1 accuired, registering MessageCallback");
                 res = infoQueue1->RegisterMessageCallback(D3D12DebugCallback, D3D12_MESSAGE_CALLBACK_IGNORE_FILTERS, NULL, NULL);
             }
-    }
+        }
 #endif
     }
 
@@ -1643,7 +1701,7 @@ static void hkCreateSampler(ID3D12Device* device, const D3D12_SAMPLER_DESC* pDes
 
     if (Config::Instance()->AnisotropyOverride.has_value() &&
         (pDesc->Filter == D3D12_FILTER_MIN_LINEAR_MAG_MIP_POINT || pDesc->Filter == D3D12_FILTER_MIN_MAG_LINEAR_MIP_POINT ||
-        pDesc->Filter == D3D12_FILTER_MIN_MAG_MIP_LINEAR || pDesc->Filter == D3D12_FILTER_ANISOTROPIC))
+            pDesc->Filter == D3D12_FILTER_MIN_MAG_MIP_LINEAR || pDesc->Filter == D3D12_FILTER_ANISOTROPIC))
     {
         LOG_DEBUG("Overriding Anisotrpic ({2}) filtering {0} -> {1}", pDesc->MaxAnisotropy, Config::Instance()->AnisotropyOverride.value(), (UINT)pDesc->Filter);
         newDesc.Filter = D3D12_FILTER_ANISOTROPIC;
@@ -1708,9 +1766,9 @@ static HRESULT hkCreateSamplerState(ID3D11Device* This, const D3D11_SAMPLER_DESC
 
     if (Config::Instance()->AnisotropyOverride.has_value() &&
         (pSamplerDesc->Filter == D3D11_FILTER_MIN_LINEAR_MAG_MIP_POINT ||
-        pSamplerDesc->Filter == D3D11_FILTER_MIN_MAG_LINEAR_MIP_POINT ||
-        pSamplerDesc->Filter == D3D11_FILTER_MIN_MAG_MIP_LINEAR ||
-        pSamplerDesc->Filter == D3D11_FILTER_ANISOTROPIC))
+            pSamplerDesc->Filter == D3D11_FILTER_MIN_MAG_LINEAR_MIP_POINT ||
+            pSamplerDesc->Filter == D3D11_FILTER_MIN_MAG_MIP_LINEAR ||
+            pSamplerDesc->Filter == D3D11_FILTER_ANISOTROPIC))
     {
         LOG_DEBUG("Overriding Anisotrpic ({2}) filtering {0} -> {1}", pSamplerDesc->MaxAnisotropy, Config::Instance()->AnisotropyOverride.value(), (UINT)pSamplerDesc->Filter);
         newDesc.Filter = D3D11_FILTER_ANISOTROPIC;
@@ -1914,4 +1972,3 @@ void HooksDx::UnHookDx()
 }
 
 #pragma endregion
-

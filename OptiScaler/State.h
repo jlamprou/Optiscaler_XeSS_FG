@@ -6,6 +6,8 @@
 
 #include <deque>
 #include <dxgi1_6.h>
+#include <xefg_swapchain_d3d12.h>
+#include <xell.h>
 
 typedef enum API
 {
@@ -55,6 +57,22 @@ public:
     int FGcapturedResourceCount = false;
     bool FGresetCapturedResources = false;
     bool FGonlyUseCapturedResources = false;
+
+    // Add these near the other FG-related state variables
+
+    // XeSS-FG
+    bool XeFgIsActive = false;
+    bool XeFgChanged = false;
+    bool XeFgDebugView = false;
+    xefg_swapchain_present_status_t XeFgLastPresentStatus = {};
+    xefg_swapchain_handle_t XeFgSwapChain = nullptr;
+    bool xefgHooks = false;  // New flag for XeFG hooks
+    // XeLL
+    bool XeLLIsActive = false;
+    xell_context_handle_t XeLLContext = nullptr;
+    xell_sleep_params_t XeLLCurrentParams = {};
+    xell_frame_report_t XeLLFrameReport = {};
+
 
     // NVNGX init parameters
     uint64_t NVNGX_ApplicationId = 1337;

@@ -112,6 +112,32 @@ bool Config::Reload(std::filesystem::path iniPath)
             XeSSLibrary.set_from_config(readWString("XeSS", "LibraryPath"));
         }
 
+        // XeLL (Intel Low Latency Library)
+        {
+            XeLLLibrary.set_from_config(readWString("XeLL", "LibraryPath"));
+            XeLLBoost.set_from_config(readBool("XeLL", "Boost"));
+            XeLLIntervalUs.set_from_config(readInt("XeLL", "IntervalUs"));
+            XeLLEnableLogging.set_from_config(readBool("XeLL", "EnableLogging"));
+        }
+
+        // XeSS Frame Generation
+        {
+            XeFGLibrary.set_from_config(readWString("XeFG", "LibraryPath"));
+            XeFGEnabled.set_from_config(readBool("XeFG", "Enabled"));
+            XeFGSceneChangeThreshold.set_from_config(readFloat("XeFG", "SceneChangeThreshold"));
+            XeFGInvertedDepth.set_from_config(readBool("XeFG", "InvertedDepth"));
+            XeFGUseNDCVelocity.set_from_config(readBool("XeFG", "UseNDCVelocity"));
+            XeFGJitteredMV.set_from_config(readBool("XeFG", "JitteredMV"));
+            XeFGUIMode.set_from_config(readInt("XeFG", "UIMode"));
+
+            // Debug options
+            XeFGDebugShowOnlyInterpolation.set_from_config(readBool("XeFG", "DebugShowOnlyInterpolation"));
+            XeFGDebugTagInterpolatedFrames.set_from_config(readBool("XeFG", "DebugTagInterpolatedFrames"));
+            XeFGDebugPresentFailedInterpolation.set_from_config(readBool("XeFG", "DebugPresentFailedInterpolation"));
+        }
+
+
+
         // DLSS
         {
             // Don't enable again if set false because of no nvngx found
@@ -581,6 +607,30 @@ bool Config::SaveIni()
         ini.SetValue("XeSS", "CreateHeaps", GetBoolValue(Instance()->CreateHeaps.value_for_config()).c_str());
         ini.SetValue("XeSS", "NetworkModel", GetIntValue(Instance()->NetworkModel.value_for_config()).c_str());
         ini.SetValue("XeSS", "LibraryPath",  wstring_to_string(Instance()->XeSSLibrary.value_for_config_or(L"auto")).c_str());
+    }
+
+    // XeLL
+    {
+        ini.SetValue("XeLL", "LibraryPath", wstring_to_string(Instance()->XeLLLibrary.value_for_config_or(L"auto")).c_str());
+        ini.SetValue("XeLL", "Boost", GetBoolValue(Instance()->XeLLBoost.value_for_config()).c_str());
+        ini.SetValue("XeLL", "IntervalUs", GetIntValue(Instance()->XeLLIntervalUs.value_for_config()).c_str());
+        ini.SetValue("XeLL", "EnableLogging", GetBoolValue(Instance()->XeLLEnableLogging.value_for_config()).c_str());
+    }
+
+    // XeSS Frame Generation
+    {
+        ini.SetValue("XeFG", "LibraryPath", wstring_to_string(Instance()->XeFGLibrary.value_for_config_or(L"auto")).c_str());
+        ini.SetValue("XeFG", "Enabled", GetBoolValue(Instance()->XeFGEnabled.value_for_config()).c_str());
+        ini.SetValue("XeFG", "SceneChangeThreshold", GetFloatValue(Instance()->XeFGSceneChangeThreshold.value_for_config()).c_str());
+        ini.SetValue("XeFG", "InvertedDepth", GetBoolValue(Instance()->XeFGInvertedDepth.value_for_config()).c_str());
+        ini.SetValue("XeFG", "UseNDCVelocity", GetBoolValue(Instance()->XeFGUseNDCVelocity.value_for_config()).c_str());
+        ini.SetValue("XeFG", "JitteredMV", GetBoolValue(Instance()->XeFGJitteredMV.value_for_config()).c_str());
+        ini.SetValue("XeFG", "UIMode", GetIntValue(Instance()->XeFGUIMode.value_for_config()).c_str());
+
+        // Debug options
+        ini.SetValue("XeFG", "DebugShowOnlyInterpolation", GetBoolValue(Instance()->XeFGDebugShowOnlyInterpolation.value_for_config()).c_str());
+        ini.SetValue("XeFG", "DebugTagInterpolatedFrames", GetBoolValue(Instance()->XeFGDebugTagInterpolatedFrames.value_for_config()).c_str());
+        ini.SetValue("XeFG", "DebugPresentFailedInterpolation", GetBoolValue(Instance()->XeFGDebugPresentFailedInterpolation.value_for_config()).c_str());
     }
 
     // DLSS

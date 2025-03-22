@@ -144,6 +144,25 @@ public:
 	CustomOptional<bool> CreateHeaps{ true };
 	CustomOptional<std::wstring, false> XeSSLibrary;
 
+	// XeLL (Intel Low Latency)
+	CustomOptional<std::wstring, false> XeLLLibrary;
+	CustomOptional<bool> XeLLBoost{ false };
+	CustomOptional<uint32_t> XeLLIntervalUs{ 0 };
+	CustomOptional<bool> XeLLEnableLogging{ true };
+
+	// XeSS Frame Generation
+	CustomOptional<std::wstring, false> XeFGLibrary;
+	CustomOptional<bool> XeFGEnabled{ false };
+	CustomOptional<float> XeFGSceneChangeThreshold{ 0.7f };
+	CustomOptional<bool> XeFGInvertedDepth{ false };
+	CustomOptional<bool> XeFGUseNDCVelocity{ false };
+	CustomOptional<bool> XeFGJitteredMV{ false };
+	CustomOptional<uint32_t> XeFGUIMode{ 0 }; // AUTO mode by default
+
+	// XeFG Debug options
+	CustomOptional<bool> XeFGDebugShowOnlyInterpolation{ false };
+	CustomOptional<bool> XeFGDebugTagInterpolatedFrames{ false };
+	CustomOptional<bool> XeFGDebugPresentFailedInterpolation{ false };
 	// DLSS
 	CustomOptional<bool> DLSSEnabled{ true };
 	CustomOptional<std::wstring, false> NvngxPath;

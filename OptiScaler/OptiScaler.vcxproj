@@ -414,6 +414,15 @@ copy NUL "$(SolutionDir)x64\Release\a\!! EXTRACT ALL FILES TO GAME FOLDER !!" /Y
     <ClInclude Include="Util.h" />
     <ClInclude Include="upscalers\xess\XeSSFeature_Dx11.h" />
     <ClInclude Include="proxies\XeSS_Proxy.h" />
+    <ClInclude Include="proxies\XeLL_Proxy.h" />
+    <ClInclude Include="proxies\XeFG_Proxy.h" />
+    <ClInclude Include="include\xefg_swapchain.h" />
+    <ClInclude Include="include\xefg_swapchain_d3d12.h" />
+    <ClInclude Include="include\xefg_swapchain_debug.h" />
+    <ClInclude Include="include\xell.h" />
+    <ClInclude Include="include\xell_d3d12.h" />
+    <!-- Add XeFG header -->
+    <ClInclude Include="framegen\XeFG_Dx12.h" />	  
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="framegen\ffx\FSRFG_Dx12.cpp" />
@@ -495,7 +504,9 @@ copy NUL "$(SolutionDir)x64\Release\a\!! EXTRACT ALL FILES TO GAME FOLDER !!" /Y
     <ClCompile Include="shaders\rcas\RCAS_Dx12.cpp" />
     <ClCompile Include="Util.cpp" />
     <ClCompile Include="inputs\XeSS_Debug.cpp" />
-    <ClCompile Include="inputs\XeSS_Dx12.cpp" />
+    <ClCompile Include="inputs\XeSS_Dx12.cpp" />   
+    <!-- Add XeFG source file -->
+    <ClCompile Include="framegen\XeFG_Dx12.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ResourceCompile Include="OptiScaler.rc" />
