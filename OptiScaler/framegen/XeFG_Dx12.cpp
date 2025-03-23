@@ -4,13 +4,24 @@
 #include <Config.h>
 #include <menu/menu_overlay_dx.h>
 
+// Also need to update the destructor to ensure proper cleanup order
 XeFG_Dx12::~XeFG_Dx12()
 {
+    LOG_DEBUG("XeFG_Dx12 destructor called");
+
+    // Ensure proper destruction order
     StopAndDestroyContext(true, true, true);
 }
 
+
 UINT64 XeFG_Dx12::UpscaleStart()
 {
+    LOG_DEBUG("Upsclale Start");
+    // Add sleep for the current frame at the beginning
+    if (_xellContext != nullptr && XeLLProxy::IsInitialized() && XeLLProxy::Sleep())
+    {
+        XeLLProxy::Sleep()(_xellContext, static_cast<uint32_t>(_frameCount));
+    }
     _frameCount++;
     LOG_DEBUG("Upascale Start : {0}", _frameCount);
     if (IsActive())
@@ -27,7 +38,7 @@ UINT64 XeFG_Dx12::UpscaleStart()
 
 void XeFG_Dx12::UpscaleEnd()
 {
-    LOG_DEBUG("");
+    LOG_DEBUG("Upsclale end");
 }
 
 feature_version XeFG_Dx12::Version()
@@ -50,6 +61,11 @@ bool XeFG_Dx12::Dispatch(ID3D12GraphicsCommandList* cmdList, ID3D12Resource* out
 {
     LOG_DEBUG("(XeFG) running, frame: {0}", _frameCount);
     auto frameIndex = _frameCount % BUFFER_COUNT;
+    uint32_t currentFrameId = static_cast<uint32_t>(_frameCount);
+
+    // Mark the simulation phase start - typically should happen earlier in the frame,
+    // but we can at least place it at the start of our function
+    MarkXeLLSimulationStart(currentFrameId);
 
     if (Config::Instance()->FGUseMutexForSwaphain.value_or_default())
     {
@@ -58,9 +74,15 @@ bool XeFG_Dx12::Dispatch(ID3D12GraphicsCommandList* cmdList, ID3D12Resource* out
         LOG_TRACE("Acquired Mutex: {}", Mutex.getOwner());
     }
 
+    // Mark simulation end - in a real implementation, this would happen after CPU work is done
+    MarkXeLLSimulationEnd(currentFrameId);
+
+    // Mark render submit start - we're about to prepare frame data for the GPU
+    MarkXeLLRenderSubmitStart(currentFrameId);
+
     // Prepare frame constants
     xefg_swapchain_frame_constant_data_t frameConstants = {};
-    
+
     // Create identity matrices if not provided
     for (int i = 0; i < 16; i++)
     {
@@ -79,7 +101,7 @@ bool XeFG_Dx12::Dispatch(ID3D12GraphicsCommandList* cmdList, ID3D12Resource* out
     // Tag frame constants
     if (XeFGProxy::TagFrameConstants() && _xefgSwapChain)
     {
-        XeFGProxy::TagFrameConstants()(_xefgSwapChain, static_cast<uint32_t>(_frameCount), &frameConstants);
+        XeFGProxy::TagFrameConstants()(_xefgSwapChain, currentFrameId, &frameConstants);
     }
 
     // Tag resources
@@ -95,14 +117,18 @@ bool XeFG_Dx12::Dispatch(ID3D12GraphicsCommandList* cmdList, ID3D12Resource* out
             velocityData.type = XEFG_SWAPCHAIN_RES_MOTION_VECTOR;
             velocityData.validity = validity;
             velocityData.resourceBase = { 0, 0 };
-            
+
             auto desc = _paramVelocity[frameIndex]->GetDesc();
             velocityData.resourceSize = { static_cast<uint32_t>(desc.Width), static_cast<uint32_t>(desc.Height) };
             velocityData.pResource = _paramVelocity[frameIndex];
-            velocityData.incomingState = validity == XEFG_SWAPCHAIN_RV_UNTIL_NEXT_PRESENT ? 
+            velocityData.incomingState = validity == XEFG_SWAPCHAIN_RV_UNTIL_NEXT_PRESENT ?
                 D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE : D3D12_RESOURCE_STATE_COPY_SOURCE;
-            
-            XeFGProxy::D3D12TagFrameResource()(_xefgSwapChain, cmdList, static_cast<uint32_t>(_frameCount), &velocityData);
+
+            xefg_swapchain_result_t result = XeFGProxy::D3D12TagFrameResource()(_xefgSwapChain, cmdList, currentFrameId, &velocityData);
+            if (result != XEFG_SWAPCHAIN_RESULT_SUCCESS)
+            {
+                LOG_WARN("Failed to tag motion vectors: {}", XeFGProxy::ResultToString(result));
+            }
         }
 
         // Tag depth
@@ -112,14 +138,18 @@ bool XeFG_Dx12::Dispatch(ID3D12GraphicsCommandList* cmdList, ID3D12Resource* out
             depthData.type = XEFG_SWAPCHAIN_RES_DEPTH;
             depthData.validity = validity;
             depthData.resourceBase = { 0, 0 };
-            
+
             auto desc = _paramDepth[frameIndex]->GetDesc();
             depthData.resourceSize = { static_cast<uint32_t>(desc.Width), static_cast<uint32_t>(desc.Height) };
             depthData.pResource = _paramDepth[frameIndex];
-            depthData.incomingState = validity == XEFG_SWAPCHAIN_RV_UNTIL_NEXT_PRESENT ? 
+            depthData.incomingState = validity == XEFG_SWAPCHAIN_RV_UNTIL_NEXT_PRESENT ?
                 D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE : D3D12_RESOURCE_STATE_COPY_SOURCE;
-            
-            XeFGProxy::D3D12TagFrameResource()(_xefgSwapChain, cmdList, static_cast<uint32_t>(_frameCount), &depthData);
+
+            xefg_swapchain_result_t result = XeFGProxy::D3D12TagFrameResource()(_xefgSwapChain, cmdList, currentFrameId, &depthData);
+            if (result != XEFG_SWAPCHAIN_RESULT_SUCCESS)
+            {
+                LOG_WARN("Failed to tag depth: {}", XeFGProxy::ResultToString(result));
+            }
         }
 
         // Tag output if provided
@@ -137,22 +167,26 @@ bool XeFG_Dx12::Dispatch(ID3D12GraphicsCommandList* cmdList, ID3D12Resource* out
                     outputData.resourceBase = { 0, 0 };
                     outputData.resourceSize = { static_cast<uint32_t>(desc.Width), static_cast<uint32_t>(desc.Height) };
                     outputData.pResource = output;
-                    outputData.incomingState = validity == XEFG_SWAPCHAIN_RV_UNTIL_NEXT_PRESENT ? 
+                    outputData.incomingState = validity == XEFG_SWAPCHAIN_RV_UNTIL_NEXT_PRESENT ?
                         D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE : D3D12_RESOURCE_STATE_COPY_SOURCE;
-                    
-                    XeFGProxy::D3D12TagFrameResource()(_xefgSwapChain, cmdList, static_cast<uint32_t>(_frameCount), &outputData);
+
+                    xefg_swapchain_result_t result = XeFGProxy::D3D12TagFrameResource()(_xefgSwapChain, cmdList, currentFrameId, &outputData);
+                    if (result != XEFG_SWAPCHAIN_RESULT_SUCCESS)
+                    {
+                        LOG_WARN("Failed to tag output: {}", XeFGProxy::ResultToString(result));
+                    }
                 }
             }
         }
     }
 
-    // Mark frame for XeLL
-    MarkXeLLFrames(static_cast<uint32_t>(_frameCount));
+    // Mark render submit end - we've finished preparing the GPU workload
+    MarkXeLLRenderSubmitEnd(currentFrameId);
 
     // Set present ID for XeSS-FG
     if (XeFGProxy::SetPresentId() && _xefgSwapChain)
     {
-        XeFGProxy::SetPresentId()(_xefgSwapChain, static_cast<uint32_t>(_frameCount));
+        XeFGProxy::SetPresentId()(_xefgSwapChain, currentFrameId);
     }
 
     if (Config::Instance()->FGUseMutexForSwaphain.value_or_default())
@@ -167,6 +201,10 @@ bool XeFG_Dx12::Dispatch(ID3D12GraphicsCommandList* cmdList, ID3D12Resource* out
 bool XeFG_Dx12::DispatchHudless(bool useHudless, double frameTime)
 {
     LOG_DEBUG("useHudless: {}, frameTime: {}", useHudless, frameTime);
+    uint32_t currentFrameId = static_cast<uint32_t>(_frameCount);
+
+    // Mark the simulation phase start
+    MarkXeLLSimulationStart(currentFrameId);
 
     if (Config::Instance()->FGUseMutexForSwaphain.value_or_default() && Mutex.getOwner() != 2)
     {
@@ -175,16 +213,22 @@ bool XeFG_Dx12::DispatchHudless(bool useHudless, double frameTime)
         LOG_TRACE("Acquired XeFG->Mutex: {}", Mutex.getOwner());
     }
 
+    // Mark simulation end
+    MarkXeLLSimulationEnd(currentFrameId);
+
+    // Mark render submit start
+    MarkXeLLRenderSubmitStart(currentFrameId);
+
     // hudless captured for this frame
     auto fIndex = GetIndex();
 
     if (useHudless && _paramHudless[fIndex] != nullptr)
     {
         LOG_TRACE("Using hudless: {:X}", (size_t)_paramHudless[fIndex]);
-        
+
         // Determine resource validity
         auto validity = XEFG_SWAPCHAIN_RV_UNTIL_NEXT_PRESENT;
-        
+
         // Tag hudless resource
         if (XeFGProxy::D3D12TagFrameResource() && _xefgSwapChain)
         {
@@ -192,19 +236,23 @@ bool XeFG_Dx12::DispatchHudless(bool useHudless, double frameTime)
             hudlessData.type = XEFG_SWAPCHAIN_RES_HUDLESS_COLOR;
             hudlessData.validity = validity;
             hudlessData.resourceBase = { 0, 0 };
-            
+
             auto desc = _paramHudless[fIndex]->GetDesc();
             hudlessData.resourceSize = { static_cast<uint32_t>(desc.Width), static_cast<uint32_t>(desc.Height) };
             hudlessData.pResource = _paramHudless[fIndex];
             hudlessData.incomingState = D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
-            
-            XeFGProxy::D3D12TagFrameResource()(_xefgSwapChain, _commandList[fIndex], static_cast<uint32_t>(_frameCount), &hudlessData);
+
+            xefg_swapchain_result_t result = XeFGProxy::D3D12TagFrameResource()(_xefgSwapChain, _commandList[fIndex], currentFrameId, &hudlessData);
+            if (result != XEFG_SWAPCHAIN_RESULT_SUCCESS)
+            {
+                LOG_WARN("Failed to tag hudless: {}", XeFGProxy::ResultToString(result));
+            }
         }
     }
 
     // Prepare frame constants
     xefg_swapchain_frame_constant_data_t frameConstants = {};
-    
+
     // Create identity matrices if not provided
     for (int i = 0; i < 16; i++)
     {
@@ -223,7 +271,7 @@ bool XeFG_Dx12::DispatchHudless(bool useHudless, double frameTime)
     // Tag frame constants
     if (XeFGProxy::TagFrameConstants() && _xefgSwapChain)
     {
-        XeFGProxy::TagFrameConstants()(_xefgSwapChain, static_cast<uint32_t>(_frameCount), &frameConstants);
+        XeFGProxy::TagFrameConstants()(_xefgSwapChain, currentFrameId, &frameConstants);
     }
 
     // Tag resources
@@ -236,13 +284,17 @@ bool XeFG_Dx12::DispatchHudless(bool useHudless, double frameTime)
             velocityData.type = XEFG_SWAPCHAIN_RES_MOTION_VECTOR;
             velocityData.validity = XEFG_SWAPCHAIN_RV_UNTIL_NEXT_PRESENT;
             velocityData.resourceBase = { 0, 0 };
-            
+
             auto desc = _paramVelocity[fIndex]->GetDesc();
             velocityData.resourceSize = { static_cast<uint32_t>(desc.Width), static_cast<uint32_t>(desc.Height) };
             velocityData.pResource = _paramVelocity[fIndex];
             velocityData.incomingState = D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
-            
-            XeFGProxy::D3D12TagFrameResource()(_xefgSwapChain, _commandList[fIndex], static_cast<uint32_t>(_frameCount), &velocityData);
+
+            xefg_swapchain_result_t result = XeFGProxy::D3D12TagFrameResource()(_xefgSwapChain, _commandList[fIndex], currentFrameId, &velocityData);
+            if (result != XEFG_SWAPCHAIN_RESULT_SUCCESS)
+            {
+                LOG_WARN("Failed to tag motion vectors: {}", XeFGProxy::ResultToString(result));
+            }
         }
 
         // Tag depth
@@ -252,23 +304,27 @@ bool XeFG_Dx12::DispatchHudless(bool useHudless, double frameTime)
             depthData.type = XEFG_SWAPCHAIN_RES_DEPTH;
             depthData.validity = XEFG_SWAPCHAIN_RV_UNTIL_NEXT_PRESENT;
             depthData.resourceBase = { 0, 0 };
-            
+
             auto desc = _paramDepth[fIndex]->GetDesc();
             depthData.resourceSize = { static_cast<uint32_t>(desc.Width), static_cast<uint32_t>(desc.Height) };
             depthData.pResource = _paramDepth[fIndex];
             depthData.incomingState = D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
-            
-            XeFGProxy::D3D12TagFrameResource()(_xefgSwapChain, _commandList[fIndex], static_cast<uint32_t>(_frameCount), &depthData);
+
+            xefg_swapchain_result_t result = XeFGProxy::D3D12TagFrameResource()(_xefgSwapChain, _commandList[fIndex], currentFrameId, &depthData);
+            if (result != XEFG_SWAPCHAIN_RESULT_SUCCESS)
+            {
+                LOG_WARN("Failed to tag depth: {}", XeFGProxy::ResultToString(result));
+            }
         }
     }
 
-    // Mark frame for XeLL
-    MarkXeLLFrames(static_cast<uint32_t>(_frameCount));
+    // Mark render submit end
+    MarkXeLLRenderSubmitEnd(currentFrameId);
 
     // Set present ID for XeSS-FG
     if (XeFGProxy::SetPresentId() && _xefgSwapChain)
     {
-        XeFGProxy::SetPresentId()(_xefgSwapChain, static_cast<uint32_t>(_frameCount));
+        XeFGProxy::SetPresentId()(_xefgSwapChain, currentFrameId);
     }
 
     if (Config::Instance()->FGUseMutexForSwaphain.value_or_default() && Mutex.getOwner() == 1)
@@ -305,23 +361,26 @@ void XeFG_Dx12::StopAndDestroyContext(bool destroy, bool shutDown, bool useMutex
 
     if (destroy)
     {
-        // Release proxy swap chain if it exists
+        // First, release proxy swap chain if it exists
         if (_xefgProxySwapChain != nullptr)
         {
             _xefgProxySwapChain->Release();
             _xefgProxySwapChain = nullptr;
         }
 
-        // Destroy XeSS-FG swap chain
+        // Then destroy XeSS-FG swap chain
         if (_xefgSwapChain != nullptr && XeFGProxy::Destroy())
         {
+            LOG_INFO("Destroying XeSS-FG SwapChain");
             XeFGProxy::Destroy()(_xefgSwapChain);
             _xefgSwapChain = nullptr;
+            State::Instance().XeFgSwapChain = nullptr;
         }
 
-        // Destroy XeLL context
+        // IMPORTANT: Destroy XeLL AFTER XeSS-FG has been destroyed
         if (_xellContext != nullptr && XeLLProxy::DestroyContext())
         {
+            LOG_INFO("Destroying XeLL Context");
             XeLLProxy::DestroyContext()(_xellContext);
             _xellContext = nullptr;
         }
@@ -339,6 +398,26 @@ void XeFG_Dx12::StopAndDestroyContext(bool destroy, bool shutDown, bool useMutex
     }
 }
 
+
+// Update the initialization order in dllmain.cpp for global cleanup
+void CleanupLibraries()
+{
+    // Clean up in the correct order - XeSS-FG first, then XeLL
+
+    // First, clean up XeSS-FG
+    if (State::Instance().XeFgSwapChain != nullptr && XeFGProxy::Destroy())
+    {
+        XeFGProxy::Destroy()(State::Instance().XeFgSwapChain);
+        State::Instance().XeFgSwapChain = nullptr;
+    }
+
+    // Then, clean up XeLL
+    if (State::Instance().XeLLContext != nullptr && XeLLProxy::DestroyContext())
+    {
+        XeLLProxy::DestroyContext()(State::Instance().XeLLContext);
+        State::Instance().XeLLContext = nullptr;
+    }
+}
 bool XeFG_Dx12::CreateSwapchain(IDXGIFactory* factory, ID3D12CommandQueue* cmdQueue, DXGI_SWAP_CHAIN_DESC* desc, IDXGISwapChain** swapChain)
 {
     LOG_DEBUG("Creating swapchain from DXGI_SWAP_CHAIN_DESC");
@@ -453,7 +532,10 @@ bool XeFG_Dx12::CreateSwapchain(IDXGIFactory* factory, ID3D12CommandQueue* cmdQu
         // Assign proxy swapchain to output parameter
         *swapChain = _xefgProxySwapChain;
         _swapChain = _xefgProxySwapChain;
-
+        // Add proper reference counting
+        if (_xefgProxySwapChain) {
+            _xefgProxySwapChain->AddRef();
+        }
         LOG_INFO("Successfully created XeFG swapchain");
         return true;
     }
@@ -562,7 +644,10 @@ bool XeFG_Dx12::CreateSwapchain1(IDXGIFactory* factory, ID3D12CommandQueue* cmdQ
         // Assign proxy swapchain to output parameter
         *swapChain = proxySwapChain1;
         _swapChain = _xefgProxySwapChain;
-
+        // Add proper reference counting
+        if (_xefgProxySwapChain) {
+            _xefgProxySwapChain->AddRef();
+        }
         LOG_INFO("Successfully created XeFG swapchain");
         return true;
     }
@@ -674,15 +759,32 @@ bool XeFG_Dx12::InitXeLL(ID3D12Device* device)
     // Set up logging for XeLL
     XeLLProxy::SetupLogging(_xellContext);
 
-    // Configure XeLL
+    // Configure XeLL according to settings
     xell_sleep_params_t sleepParams = {};
-    sleepParams.bLowLatencyMode = 1;
-    sleepParams.bLowLatencyBoost = Config::Instance()->XeLLBoost.value_or_default() ? 1 : 0;
-   // sleepParams.minimumIntervalUs = Config::Instance()->XeLLIntervalUs.value_or_default(0);
+    sleepParams.bLowLatencyMode = 1; // Enable low latency mode for frame generation
 
-    if (XeLLProxy::SetSleepMode()(_xellContext, &sleepParams) != XELL_RESULT_SUCCESS)
+    // Configure boost if enabled in configuration
+    sleepParams.bLowLatencyBoost = Config::Instance()->XeLLBoost.value_or_default() ? 1 : 0;
+
+    // Set frame limiter if specified (in microseconds)
+    uint32_t intervalMs = Config::Instance()->XeLLIntervalUs.value_or_default();
+    if (intervalMs > 0)
     {
-        LOG_WARN("Failed to set XeLL sleep mode");
+        sleepParams.minimumIntervalUs = intervalMs;
+    }
+
+    // Apply the configuration
+    xell_result_t result = XeLLProxy::SetSleepMode()(_xellContext, &sleepParams);
+    if (result != XELL_RESULT_SUCCESS)
+    {
+        LOG_WARN("Failed to set XeLL sleep mode: {}", XeLLProxy::ResultToString(result));
+        // We continue even if this fails, as basic functionality should still work
+    }
+
+    // Store the current parameters in State for reference
+    if (XeLLProxy::GetSleepMode() && State::Instance().XeLLCurrentParams.bLowLatencyMode != sleepParams.bLowLatencyMode)
+    {
+        XeLLProxy::GetSleepMode()(_xellContext, &State::Instance().XeLLCurrentParams);
     }
 
     LOG_INFO("XeLL initialized successfully");
@@ -764,30 +866,75 @@ xefg_swapchain_resource_validity_t XeFG_Dx12::GetResourceValidity(ID3D12Graphics
     return XEFG_SWAPCHAIN_RV_ONLY_NOW;
 }
 
-void XeFG_Dx12::MarkXeLLFrames(uint32_t frameId)
+bool XeFG_Dx12::InitXeLLAndSleep(ID3D12Device* device, uint32_t frameId)
 {
-    if (_xellContext == nullptr || !XeLLProxy::IsInitialized())
+    // Initialize XeLL if needed
+    if (_xellContext == nullptr && !InitXeLL(device))
+    {
+        LOG_WARN("Failed to initialize XeLL, proceeding without latency reduction");
+        return false;
+    }
+
+    // Call Sleep at the beginning of the frame for the current frame
+    if (_xellContext != nullptr && XeLLProxy::Sleep())
+    {
+        // Sleep before starting the frame processing
+        xell_result_t result = XeLLProxy::Sleep()(_xellContext, frameId);
+        if (result != XELL_RESULT_SUCCESS)
+        {
+            LOG_WARN("XeLL Sleep failed: {}", XeLLProxy::ResultToString(result));
+            return false;
+        }
+        return true;
+    }
+
+    return false;
+}
+
+void XeFG_Dx12::MarkXeLLSimulationStart(uint32_t frameId)
+{
+    if (_xellContext == nullptr || !XeLLProxy::IsInitialized() || !XeLLProxy::AddMarkerData())
         return;
 
-    // Add markers for XeLL
-    if (XeLLProxy::AddMarkerData())
-    {
-        // Simulation markers
-        XeLLProxy::AddMarkerData()(_xellContext, frameId, XELL_SIMULATION_START);
-        XeLLProxy::AddMarkerData()(_xellContext, frameId, XELL_SIMULATION_END);
-        
-        // Render submit markers
-        XeLLProxy::AddMarkerData()(_xellContext, frameId, XELL_RENDERSUBMIT_START);
-        XeLLProxy::AddMarkerData()(_xellContext, frameId, XELL_RENDERSUBMIT_END);
-        
-        // Present markers
-        XeLLProxy::AddMarkerData()(_xellContext, frameId, XELL_PRESENT_START);
-        XeLLProxy::AddMarkerData()(_xellContext, frameId, XELL_PRESENT_END);
-    }
+    XeLLProxy::AddMarkerData()(_xellContext, frameId, XELL_SIMULATION_START);
+}
 
-    // Sleep for next frame
-    if (XeLLProxy::Sleep())
-    {
-        XeLLProxy::Sleep()(_xellContext, frameId + 1);
-    }
+void XeFG_Dx12::MarkXeLLSimulationEnd(uint32_t frameId)
+{
+    if (_xellContext == nullptr || !XeLLProxy::IsInitialized() || !XeLLProxy::AddMarkerData())
+        return;
+
+    XeLLProxy::AddMarkerData()(_xellContext, frameId, XELL_SIMULATION_END);
+}
+
+void XeFG_Dx12::MarkXeLLRenderSubmitStart(uint32_t frameId)
+{
+    if (_xellContext == nullptr || !XeLLProxy::IsInitialized() || !XeLLProxy::AddMarkerData())
+        return;
+
+    XeLLProxy::AddMarkerData()(_xellContext, frameId, XELL_RENDERSUBMIT_START);
+}
+
+void XeFG_Dx12::MarkXeLLRenderSubmitEnd(uint32_t frameId)
+{
+    if (_xellContext == nullptr || !XeLLProxy::IsInitialized() || !XeLLProxy::AddMarkerData())
+        return;
+
+    XeLLProxy::AddMarkerData()(_xellContext, frameId, XELL_RENDERSUBMIT_END);
+}
+
+void XeFG_Dx12::MarkXeLLPresentStart(uint32_t frameId)
+{
+    if (_xellContext == nullptr || !XeLLProxy::IsInitialized() || !XeLLProxy::AddMarkerData())
+        return;
+
+    XeLLProxy::AddMarkerData()(_xellContext, frameId, XELL_PRESENT_START);
+}
+
+void XeFG_Dx12::MarkXeLLPresentEnd(uint32_t frameId)
+{
+    if (_xellContext == nullptr || !XeLLProxy::IsInitialized() || !XeLLProxy::AddMarkerData())
+        return;
+
+    XeLLProxy::AddMarkerData()(_xellContext, frameId, XELL_PRESENT_END);
 }
