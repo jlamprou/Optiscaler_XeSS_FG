@@ -31,8 +31,6 @@ private:
     // Resource validity
     xefg_swapchain_resource_validity_t GetResourceValidity(ID3D12GraphicsCommandList* cmdList);
     
-    // Mark frames for XeLL
-    void MarkXeLLFrames(uint32_t frameId);
 
 public:
     // Inherited via IFGFeature_Dx12
@@ -58,7 +56,16 @@ public:
     void ConfigureXeFG(bool enableDebug = false);
     void SetUIMode(xefg_swapchain_ui_mode_t mode);
     xefg_swapchain_present_status_t GetLastPresentStatus();
+    // XeLL marker methods - each should be called at the appropriate time
+    void MarkXeLLSimulationStart(uint32_t frameId);
+    void MarkXeLLSimulationEnd(uint32_t frameId);
+    void MarkXeLLRenderSubmitStart(uint32_t frameId);
+    void MarkXeLLRenderSubmitEnd(uint32_t frameId);
+    void MarkXeLLPresentStart(uint32_t frameId);
+    void MarkXeLLPresentEnd(uint32_t frameId);
 
+    // Initialize XeLL and sleep for next frame
+    bool InitXeLLAndSleep(ID3D12Device* device, uint32_t frameId);
     // Inherited via IFGFeature_Dx12
     void FgDone() override;
 

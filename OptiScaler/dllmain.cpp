@@ -2295,7 +2295,7 @@ static void CheckQuirks() {
         State::Instance().gameQuirk = Cyberpunk;
 
         // Disabled OptiFG for now
-        Config::Instance()->FGUseFGSwapChain.set_volatile_value(false);
+        Config::Instance()->FGUseFGSwapChain.set_volatile_value(true);
         Config::Instance()->DLSSGMod.set_volatile_value(true);
 
         LOG_INFO("Enabling a quirk for Cyberpunk (Disable FSR-FG Swapchain & enable DLSS-G fix)");
@@ -2486,7 +2486,7 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call, LPVOID lpReserv
             else
                 LOG_INFO("XeFG proxy initialized successfully");
             // Initial state of FSR-FG
-            State::Instance().FsrFgIsActive = Config::Instance()->FGUseFGSwapChain.value_or_default();
+            State::Instance().FsrFgIsActive = false;
             State::Instance().DLSSGIsActive = Config::Instance()->DLSSGMod.value_or_default();
             // Add initial state for XeFG and XeLL
             State::Instance().XeFgIsActive = Config::Instance()->XeFGEnabled.value_or_default();
