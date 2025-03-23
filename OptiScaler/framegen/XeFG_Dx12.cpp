@@ -1,5 +1,5 @@
 #include "XeFG_Dx12.h"
-
+#include <upscalers/IFeature.h>
 #include <State.h>
 #include <Config.h>
 #include <menu/menu_overlay_dx.h>
@@ -12,7 +12,7 @@ XeFG_Dx12::~XeFG_Dx12()
 UINT64 XeFG_Dx12::UpscaleStart()
 {
     _frameCount++;
-
+    LOG_DEBUG("Upascale Start : {0}", _frameCount);
     if (IsActive())
     {
         auto frameIndex = GetIndex();
@@ -21,7 +21,7 @@ UINT64 XeFG_Dx12::UpscaleStart()
         result = _commandList[frameIndex]->Reset(allocator, nullptr);
         LOG_DEBUG("_commandList[{}]->Reset()", frameIndex);
     }
-
+    LOG_DEBUG("Upascale End");
     return _frameCount;
 }
 

@@ -2362,7 +2362,7 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call, LPVOID lpReserv
             spdlog::warn("");
             spdlog::warn("LogLevel: {0}", Config::Instance()->LogLevel.value_or_default());
             Config::Instance()->XeFGEnabled.set_volatile_value(true);
-            Config::Instance()->FGUseFGSwapChain.set_volatile_value(false);
+            //Config::Instance()->FGUseFGSwapChain.set_volatile_value(false);
 
             // Check for Wine
             skipGetModuleHandle = true;
@@ -2486,7 +2486,7 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call, LPVOID lpReserv
             else
                 LOG_INFO("XeFG proxy initialized successfully");
             // Initial state of FSR-FG
-            State::Instance().FsrFgIsActive = Config::Instance()->FGUseFGSwapChain.value_or_default();
+            State::Instance().FsrFgIsActive = false;
             State::Instance().DLSSGIsActive = Config::Instance()->DLSSGMod.value_or_default();
             // Add initial state for XeFG and XeLL
             State::Instance().XeFgIsActive = Config::Instance()->XeFGEnabled.value_or_default();

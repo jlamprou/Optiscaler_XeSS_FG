@@ -147,6 +147,7 @@ public:
 	// XeLL (Intel Low Latency)
 	CustomOptional<std::wstring, false> XeLLLibrary;
 	CustomOptional<bool> XeLLBoost{ false };
+	CustomOptional<bool> XeLLEnabled{ false };
 	CustomOptional<uint32_t> XeLLIntervalUs{ 0 };
 	CustomOptional<bool> XeLLEnableLogging{ true };
 

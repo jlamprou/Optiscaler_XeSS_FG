@@ -10,7 +10,6 @@
 #include <hooks/HooksDx.h>
 
 #include <imgui/imgui_internal.h>
-#include <proxies/XeLL_Proxy.h>
 #include <proxies/XeFG_Proxy.h>
 #include <framegen/XeFG_Dx12.h>
 
@@ -1236,284 +1235,251 @@ bool MenuCommon::RenderMenu()
                     }
                 }
 
-                // In menu_common.cpp, find the Frame Generation section and replace with this code
-
                 // Frame Generation
+// XeSS Frame Generation
                 if (Config::Instance()->OverlayMenu.value_or_default() && State::Instance().api == DX12 && !State::Instance().isWorkingAsNvngx)
                 {
-                    ImGui::SeparatorText("Frame Generation");
+                    ImGui::SeparatorText("Intel XeSS Frame Generation");
 
-                    // Choose between FSR-FG and XeSS-FG
+                    // Check if Intel XeSS-FG is available (XeFG and XeLL libraries are initialized)
+                    bool xeFgAvailable = XeFGProxy::IsInitialized() && XeLLProxy::IsInitialized();
+
+                    if (!State::Instance().XeFgIsActive)
                     {
-                        bool xefgEnabled = Config::Instance()->XeFGEnabled.value_or_default();
-                        if (ImGui::Checkbox("Use XeSS Frame Generation", &xefgEnabled))
+                        auto xeFgActive = Config::Instance()->XeFGEnabled.value_or_default();
+                        if (ImGui::Checkbox("Enable Intel XeSS Frame Generation", &xeFgActive))
                         {
-                            Config::Instance()->XeFGEnabled = xefgEnabled;
+                            Config::Instance()->XeFGEnabled = xeFgActive;
 
-                            // If enabling XeSS-FG, make sure FSR-FG is disabled and initialize the libraries
-                            if (xefgEnabled)
+                            if (xeFgActive)
                             {
-                                Config::Instance()->FGUseFGSwapChain = false;
-
-                                // Try to load the required libraries if not already loaded
-                                if (!State::Instance().XeLLIsActive)
-                                    State::Instance().XeLLIsActive = XeLLProxy::InitXeLL();
-
-                                if (!State::Instance().XeFgIsActive)
-                                    State::Instance().XeFgIsActive = XeFGProxy::InitXeFG();
-
-                                // Inform the user if library loading failed
-                                if (!State::Instance().XeLLIsActive || !State::Instance().XeFgIsActive)
-                                    LOG_WARN("Failed to load required libraries for XeSS Frame Generation");
-                            }
-                        }
-                        ShowHelpMarker("Enable Intel XeSS Frame Generation\nRequires libxess_fg.dll and libxell.dll");
-
-                        ImGui::SameLine(0.0f, 16.0f);
-
-                        // Create a disabled checkbox for FSR-FG when XeSS-FG is enabled
-                        ImGui::BeginDisabled(Config::Instance()->XeFGEnabled.value_or_default());
-                        bool fsrFgActive = Config::Instance()->FGUseFGSwapChain.value_or_default();
-                        if (ImGui::Checkbox("Use FSR Frame Generation", &fsrFgActive))
-                        {
-                            Config::Instance()->FGUseFGSwapChain = fsrFgActive;
-
-                            if (fsrFgActive)
+                                // Disable conflicting frame generation technologies
+                                Config::Instance()->FGUseFGSwapChain = true;
                                 Config::Instance()->DLSSGMod = false;
+                            }
                             else
-                                Config::Instance()->DLSSGMod.reset();
-                        }
-                        ShowHelpMarker("These settings will become active on next boot!");
-                        ImGui::EndDisabled();
-                    }
-
-                    // XeSS-FG specific settings
-                    if (Config::Instance()->XeFGEnabled.value_or_default() && currentFeature != nullptr)
-                    {
-                        // Check if XeSS-FG is active in the current state
-                        bool xefgActive = State::Instance().XeFgIsActive;
-                        if (State::Instance().currentFG != nullptr)
-                        {
-                            auto fg = dynamic_cast<XeFG_Dx12*>(State::Instance().currentFG);
-                            xefgActive = fg != nullptr && fg->IsActive();
+                            {
+                                Config::Instance()->XeFGEnabled.reset();
+                            }
                         }
 
-                        if (xefgActive)
+                        if (!xeFgAvailable)
                         {
-                            ImGui::Spacing();
-
-                            // UI Mode selection
-                            const char* uiModes[] = { "Auto", "Automatic Detection", "No UI", "Full UI" };
-                            int uiMode = Config::Instance()->XeFGUIMode.value_or_default();
-
-                            ImGui::PushItemWidth(150.0f * Config::Instance()->MenuScale.value_or_default());
-                            if (ImGui::Combo("UI Mode", &uiMode, uiModes, 4))
-                            {
-                                Config::Instance()->XeFGUIMode = uiMode;
-                                if (State::Instance().currentFG != nullptr)
-                                {
-                                    auto fg = dynamic_cast<XeFG_Dx12*>(State::Instance().currentFG);
-                                    if (fg)
-                                        fg->SetUIMode((xefg_swapchain_ui_mode_t)uiMode);
-                                }
-                            }
-                            ImGui::PopItemWidth();
-                            ShowHelpMarker("Auto: Use heuristics to detect UI elements\n"
-                                "Automatic Detection: More aggressive UI detection\n"
-                                "No UI: Disables UI detection\n"
-                                "Full UI: Treats everything as UI elements");
-
-                            // Scene change threshold
-                            float threshold = Config::Instance()->XeFGSceneChangeThreshold.value_or_default();
-                            if (ImGui::SliderFloat("Scene Change Threshold", &threshold, 0.1f, 1.0f, "%.2f"))
-                                Config::Instance()->XeFGSceneChangeThreshold = threshold;
-                            ShowHelpMarker("Higher values make scene change detection less sensitive\n"
-                                "Lower values trigger more frequently on subtle changes");
-
-                            // Debug options
-                            bool debugView = Config::Instance()->FGDebugView.value_or_default();
-                            if (ImGui::Checkbox("Debug View", &debugView))
-                            {
-                                Config::Instance()->FGDebugView = debugView;
-                                State::Instance().XeFgDebugView = debugView;
-                                State::Instance().XeFgChanged = true;
-                            }
-                            ShowHelpMarker("Show XeSS-FG debug visualization");
-
-                            // Display status information
-                            if (State::Instance().XeFgLastPresentStatus.framesPresented > 0)
-                            {
-                                ImGui::Spacing();
-                                ImGui::SeparatorText("XeSS-FG Status");
-
-                                ImGui::Text("Frames Presented: %u", State::Instance().XeFgLastPresentStatus.framesPresented);
-                                ImGui::Text("Frame Generation %s", State::Instance().XeFgLastPresentStatus.isFrameGenEnabled ? "Enabled" : "Disabled");
-
-                                // Display the result of frame generation
-                                const char* resultString = "Unknown";
-                                switch (State::Instance().XeFgLastPresentStatus.frameGenResult) {
-                                case XEFG_SWAPCHAIN_RESULT_SUCCESS:
-                                    resultString = "Success";
-                                    break;
-                                case XEFG_SWAPCHAIN_RESULT_WARNING_OLD_DRIVER:
-                                    resultString = "Warning: Old driver";
-                                    break;
-                                case XEFG_SWAPCHAIN_RESULT_WARNING_TOO_FEW_FRAMES:
-                                    resultString = "Warning: Too few frames";
-                                    break;
-                                case XEFG_SWAPCHAIN_RESULT_WARNING_FRAMES_ID_MISMATCH:
-                                    resultString = "Warning: Frame ID mismatch";
-                                    break;
-                                case XEFG_SWAPCHAIN_RESULT_WARNING_MISSING_PRESENT_STATUS:
-                                    resultString = "Warning: Missing present status";
-                                    break;
-                                case XEFG_SWAPCHAIN_RESULT_WARNING_RESOURCE_SIZES_MISMATCH:
-                                    resultString = "Warning: Resource sizes mismatch";
-                                    break;
-                                default:
-                                    if (State::Instance().XeFgLastPresentStatus.frameGenResult > XEFG_SWAPCHAIN_RESULT_SUCCESS)
-                                        resultString = "Error (see log for details)";
-                                    break;
-                                }
-                                ImGui::Text("Frame Generation Result: %s", resultString);
-                            }
+                            ImGui::SameLine();
+                            ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), "(Libraries not found)");
+                            ShowHelpMarker("XeSS-FG requires libxess_fg.dll and libxell.dll to be present in the game folder.");
                         }
                         else
                         {
-                            ImGui::TextColored({ 1.0f, 0.5f, 0.0f, 1.0f }, "XeSS Frame Generation is not active");
-                            ImGui::Text("Make sure that libxess_fg.dll and libxell.dll are available");
-                        }
-
-                        // XeLL (Intel Low Latency) settings
-                        ImGui::Spacing();
-                        if (ImGui::CollapsingHeader("XeLL Settings"))
-                        {
-                            ImGui::Spacing();
-                            // In XeFG settings section (~line 2080):
-                            ImGui::Text("XeLL Initialized: %s", XeLLProxy::IsInitialized() ? "Yes" : "No");
-                            ImGui::Text("XeFG Initialized: %s", XeFGProxy::IsInitialized() ? "Yes" : "No");
-                            ImGui::Text("FG Implementation: %s",
-                                State::Instance().currentFG ? State::Instance().currentFG->Name() : "None");
-                            bool xellBoost = Config::Instance()->XeLLBoost.value_or_default();
-                            if (ImGui::Checkbox("Enable Latency Boost", &xellBoost))
-                                Config::Instance()->XeLLBoost = xellBoost;
-                            ShowHelpMarker("Enables aggressive latency reduction\n"
-                                "May reduce performance but improve responsiveness");
-
-                            ImGui::PushItemWidth(120.0f * Config::Instance()->MenuScale.value_or_default());
-                            uint32_t intervalUs = Config::Instance()->XeLLIntervalUs.value_or_default();
-                            if (ImGui::InputScalar("Sleep Interval (μs)", ImGuiDataType_U32, &intervalUs))
-                                Config::Instance()->XeLLIntervalUs = intervalUs;
-                            ImGui::PopItemWidth();
-                            ShowHelpMarker("Minimum sleep interval in microseconds\n"
-                                "0 means automatic (recommended)");
-
-                            // If XeLL is active, show frame reports
-                            if (State::Instance().XeLLIsActive && State::Instance().XeLLContext != nullptr)
-                            {
-                                ImGui::Spacing();
-                                ImGui::Text("XeLL Status:");
-
-                                if (XeLLProxy::GetFramesReports() && XeLLProxy::GetFramesReports()(State::Instance().XeLLContext, &State::Instance().XeLLFrameReport) == XELL_RESULT_SUCCESS)
-                                {
-                                    // Calculate simulation time, render time, and present time from timestamps (ns to ms)
-                                    float simTimeMs = (State::Instance().XeLLFrameReport.m_sim_end_ts -
-                                        State::Instance().XeLLFrameReport.m_sim_start_ts) / 1000000.0f;
-
-                                    float renderTimeMs = (State::Instance().XeLLFrameReport.m_render_submit_end_ts -
-                                        State::Instance().XeLLFrameReport.m_render_submit_start_ts) / 1000000.0f;
-
-                                    float presentTimeMs = (State::Instance().XeLLFrameReport.m_present_end_ts -
-                                        State::Instance().XeLLFrameReport.m_present_start_ts) / 1000000.0f;
-
-                                    // Calculate total frame time
-                                    float totalFrameTimeMs = (State::Instance().XeLLFrameReport.m_present_end_ts -
-                                        State::Instance().XeLLFrameReport.m_sim_start_ts) / 1000000.0f;
-
-                                    ImGui::Text("Frame ID: %u", State::Instance().XeLLFrameReport.m_frame_id);
-                                    ImGui::Text("Simulation Time: %.2f ms", simTimeMs);
-                                    ImGui::Text("Render Time: %.2f ms", renderTimeMs);
-                                    ImGui::Text("Present Time: %.2f ms", presentTimeMs);
-                                    ImGui::Text("Total Frame Time: %.2f ms", totalFrameTimeMs);
-                                }
-                                else
-                                {
-                                    ImGui::Text("Frame report not available");
-                                }
-
-                                // Show current sleep mode
-                                if (XeLLProxy::GetSleepMode() && XeLLProxy::GetSleepMode()(State::Instance().XeLLContext, &State::Instance().XeLLCurrentParams) == XELL_RESULT_SUCCESS)
-                                {
-                                    ImGui::Text("Low Latency Mode: %s", State::Instance().XeLLCurrentParams.bLowLatencyMode ? "Enabled" : "Disabled");
-                                    ImGui::Text("Low Latency Boost: %s", State::Instance().XeLLCurrentParams.bLowLatencyBoost ? "Enabled" : "Disabled");
-                                    ImGui::Text("Minimum Interval: %u μs", State::Instance().XeLLCurrentParams.minimumIntervalUs);
-                                }
-                            }
-                            else
-                            {
-                                ImGui::Text("XeLL is not active");
-                            }
-                        }
-
-                        // Advanced settings for XeSS-FG
-                        ImGui::Spacing();
-                        if (ImGui::CollapsingHeader("Advanced XeSS-FG Settings"))
-                        {
-                            ImGui::Spacing();
-
-                            bool invertedDepth = Config::Instance()->XeFGInvertedDepth.value_or_default();
-                            if (ImGui::Checkbox("Inverted Depth", &invertedDepth))
-                                Config::Instance()->XeFGInvertedDepth = invertedDepth;
-                            ShowHelpMarker("Enable if the game uses inverted depth buffer\n"
-                                "Changes take effect on next startup");
-
-                            bool useNDCVelocity = Config::Instance()->XeFGUseNDCVelocity.value_or_default();
-                            if (ImGui::Checkbox("Use NDC Velocity", &useNDCVelocity))
-                                Config::Instance()->XeFGUseNDCVelocity = useNDCVelocity;
-                            ShowHelpMarker("Enable if the game uses NDC (Normalized Device Coordinates) velocity vectors\n"
-                                "Changes take effect on next startup");
-
-                            bool jitteredMV = Config::Instance()->XeFGJitteredMV.value_or_default();
-                            if (ImGui::Checkbox("Jittered Motion Vectors", &jitteredMV))
-                                Config::Instance()->XeFGJitteredMV = jitteredMV;
-                            ShowHelpMarker("Enable if the game uses jittered motion vectors\n"
-                                "Changes take effect on next startup");
-
-                            ImGui::Spacing();
-                            ImGui::Text("Debug Features:");
-
-                            bool debugOnlyInterpolation = Config::Instance()->XeFGDebugShowOnlyInterpolation.value_or_default();
-                            if (ImGui::Checkbox("Show Only Interpolation", &debugOnlyInterpolation))
-                                Config::Instance()->XeFGDebugShowOnlyInterpolation = debugOnlyInterpolation;
-                            ShowHelpMarker("When debug view is enabled, only show interpolated frames");
-
-                            bool debugTagFrames = Config::Instance()->XeFGDebugTagInterpolatedFrames.value_or_default();
-                            if (ImGui::Checkbox("Tag Interpolated Frames", &debugTagFrames))
-                                Config::Instance()->XeFGDebugTagInterpolatedFrames = debugTagFrames;
-                            ShowHelpMarker("Add visual markers to interpolated frames");
-
-                            bool debugPresentFailed = Config::Instance()->XeFGDebugPresentFailedInterpolation.value_or_default();
-                            if (ImGui::Checkbox("Present Failed Interpolation", &debugPresentFailed))
-                                Config::Instance()->XeFGDebugPresentFailedInterpolation = debugPresentFailed;
-                            ShowHelpMarker("Present frames even when interpolation fails");
-
-                            if (ImGui::Button("Apply Debug Changes"))
-                            {
-                                if (State::Instance().currentFG != nullptr)
-                                {
-                                    auto fg = dynamic_cast<XeFG_Dx12*>(State::Instance().currentFG);
-                                    if (fg)
-                                        fg->ConfigureXeFG(Config::Instance()->FGDebugView.value_or_default());
-                                }
-                            }
-                            ShowHelpMarker("Apply debug setting changes to the active XeSS-FG instance");
+                            ShowHelpMarker("These settings will become active on next boot!");
                         }
                     }
-                    else if (State::Instance().FsrFgIsActive && currentFeature != nullptr && FfxApiProxy::InitFfxDx12())
+
+                    if (State::Instance().XeFgIsActive && currentFeature != nullptr && xeFgAvailable)
                     {
-                        // Original FSR-FG UI code goes here, keeping this comment as a placeholder
-                        // This section is intentionally commented out to focus on XeSS-FG for testing
-                        ImGui::TextColored({ 0.5f, 0.5f, 0.5f, 1.0f }, "FSR Frame Generation temporarily disabled for testing");
+                        bool fgActive = Config::Instance()->XeFGEnabled.value_or_default();
+                        if (ImGui::Checkbox("XeFG Active", &fgActive))
+                        {
+                            Config::Instance()->XeFGEnabled = fgActive;
+                            LOG_DEBUG("Enabled set XeFGEnabled: {}", fgActive);
+
+                            if (Config::Instance()->XeFGEnabled.value_or_default())
+                                State::Instance().XeFgChanged = true;
+                        }
+                        ShowHelpMarker("Enable Intel XeSS frame generation");
+
+                        // UI Mode selection
+                        ImGui::Text("UI Composition Mode:");
+                        ImGui::SameLine();
+                        ImGui::PushItemWidth(180.0f * Config::Instance()->MenuScale.value_or_default());
+
+                        static const char* uiModes[] = {
+                            "Auto",
+                            "None",
+                            "Backbuffer + UI Texture",
+                            "HUDless + UI Texture",
+                            "Backbuffer + HUDless",
+                            "Backbuffer + HUDless + UI Texture"
+                        };
+
+                        int currentMode = Config::Instance()->XeFGUIMode.value_or_default();
+                        if (ImGui::Combo("##XeFGUIMode", &currentMode, uiModes, IM_ARRAYSIZE(uiModes)))
+                        {
+                            Config::Instance()->XeFGUIMode = currentMode;
+                            LOG_DEBUG("Set XeFGUIMode: {}", currentMode);
+
+                            // Get the current XeFG instance
+                            XeFG_Dx12* xeFG = nullptr;
+                            if (State::Instance().currentFG != nullptr && State::Instance().XeFgIsActive)
+                                xeFG = reinterpret_cast<XeFG_Dx12*>(State::Instance().currentFG);
+
+                            // Apply the UI mode if the instance exists
+                            if (xeFG != nullptr)
+                                xeFG->SetUIMode(static_cast<xefg_swapchain_ui_mode_t>(currentMode));
+                        }
+                        ImGui::PopItemWidth();
+                        ShowHelpMarker("Controls how UI is handled in generated frames.\nAuto: Automatically determines best mode\nNone: No special UI handling (not recommended)\nBackbuffer + UI Texture: Uses UI texture to refine UI elements\nHUDless + UI Texture: Interpolates HUDless color and blends UI\nBackbuffer + HUDless: Extracts UI from backbuffer\nBackbuffer + HUDless + UI Texture: Most robust UI handling");
+
+                        // XeLL integration settings
+                        if (State::Instance().XeLLIsActive)
+                        {
+                            bool xellBoost = Config::Instance()->XeLLBoost.value_or_default();
+                            if (ImGui::Checkbox("Low Latency Boost", &xellBoost))
+                            {
+                                Config::Instance()->XeLLBoost = xellBoost;
+                                LOG_DEBUG("Enabled XeLL Boost: {}", xellBoost);
+                                State::Instance().XeFgChanged = true;
+                            }
+                            ShowHelpMarker("Enable Intel XeLL Low Latency Boost mode");
+
+                            ImGui::SameLine(0.0f, 16.0f);
+
+                            ImGui::PushItemWidth(95.0 * Config::Instance()->MenuScale.value_or_default());
+                            int intervalUs = Config::Instance()->XeLLIntervalUs.value_or_default();
+                            if (ImGui::InputInt("Frame Limit (μs)", &intervalUs, 1000, 10000))
+                            {
+                                if (intervalUs < 0)
+                                    intervalUs = 0;
+
+                                Config::Instance()->XeLLIntervalUs = intervalUs;
+                                LOG_DEBUG("Set XeLL IntervalUs: {}", intervalUs);
+                                State::Instance().XeFgChanged = true;
+                            }
+                            ImGui::PopItemWidth();
+                            ShowHelpMarker("Set frame rate limit in microseconds (0 = no limit)\n16,667 μs = 60 FPS\n8,333 μs = 120 FPS");
+                        }
+                        else
+                        {
+                            ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.0f, 1.0f), "XeLL (Low Latency) not active");
+                        }
+
+                        // Motion vector settings
+                        bool useNDCVelocity = Config::Instance()->XeFGUseNDCVelocity.value_or_default();
+                        if (ImGui::Checkbox("Use NDC Velocity", &useNDCVelocity))
+                        {
+                            Config::Instance()->XeFGUseNDCVelocity = useNDCVelocity;
+                            LOG_DEBUG("Set UseNDCVelocity: {}", useNDCVelocity);
+                            State::Instance().XeFgChanged = true;
+                        }
+                        ShowHelpMarker("Use normalized device coordinates for motion vectors");
+
+                        ImGui::SameLine(0.0f, 16.0f);
+
+                        bool jitteredMV = Config::Instance()->XeFGJitteredMV.value_or_default();
+                        if (ImGui::Checkbox("Jittered Motion Vectors", &jitteredMV))
+                        {
+                            Config::Instance()->XeFGJitteredMV = jitteredMV;
+                            LOG_DEBUG("Set JitteredMV: {}", jitteredMV);
+                            State::Instance().XeFgChanged = true;
+                        }
+                        ShowHelpMarker("Enable if motion vectors include jitter");
+
+                        // Depth settings
+                        bool invertedDepth = Config::Instance()->XeFGInvertedDepth.value_or_default();
+                        if (ImGui::Checkbox("Inverted Depth", &invertedDepth))
+                        {
+                            Config::Instance()->XeFGInvertedDepth = invertedDepth;
+                            LOG_DEBUG("Set InvertedDepth: {}", invertedDepth);
+                            State::Instance().XeFgChanged = true;
+                        }
+                        ShowHelpMarker("Use inverted depth buffer (1.0 = near, 0.0 = far)");
+
+                        // Scene change threshold
+                        ImGui::PushItemWidth(120.0f * Config::Instance()->MenuScale.value_or_default());
+                        float sceneChangeThreshold = Config::Instance()->XeFGSceneChangeThreshold.value_or_default();
+                        if (ImGui::SliderFloat("Scene Change Threshold", &sceneChangeThreshold, 0.0f, 1.0f, "%.2f"))
+                        {
+                            Config::Instance()->XeFGSceneChangeThreshold = sceneChangeThreshold;
+                            LOG_DEBUG("Set SceneChangeThreshold: {}", sceneChangeThreshold);
+
+                            // Get the current XeFG instance
+                            XeFG_Dx12* xeFG = nullptr;
+                            if (State::Instance().currentFG != nullptr && State::Instance().XeFgIsActive)
+                                xeFG = reinterpret_cast<XeFG_Dx12*>(State::Instance().currentFG);
+
+                            // Apply the scene change threshold if the instance exists
+                            if (xeFG != nullptr && XeFGProxy::SetSceneChangeThreshold())
+                                XeFGProxy::SetSceneChangeThreshold()(State::Instance().XeFgSwapChain, sceneChangeThreshold);
+                        }
+                        ImGui::PopItemWidth();
+                        ShowHelpMarker("Controls sensitivity to scene changes (0.0 = least sensitive, 1.0 = most sensitive)\nHigher values disable interpolation more readily on scene changes");
+
+                        // Debug options
+                        ImGui::Spacing();
+                        if (ImGui::CollapsingHeader("XeFG Debug Options"))
+                        {
+                            bool showOnlyInterpolation = Config::Instance()->XeFGDebugShowOnlyInterpolation.value_or_default();
+                            if (ImGui::Checkbox("Show Only Interpolated Frames", &showOnlyInterpolation))
+                            {
+                                Config::Instance()->XeFGDebugShowOnlyInterpolation = showOnlyInterpolation;
+                                LOG_DEBUG("Set XeFGDebugShowOnlyInterpolation: {}", showOnlyInterpolation);
+
+                                if (State::Instance().XeFgSwapChain != nullptr && XeFGProxy::EnableDebugFeature())
+                                    XeFGProxy::EnableDebugFeature()(State::Instance().XeFgSwapChain,
+                                        XEFG_SWAPCHAIN_DEBUG_FEATURE_SHOW_ONLY_INTERPOLATION, showOnlyInterpolation ? 1 : 0, nullptr);
+                            }
+                            ShowHelpMarker("Only show frames generated by XeSS-FG");
+
+                            bool tagInterpolatedFrames = Config::Instance()->XeFGDebugTagInterpolatedFrames.value_or_default();
+                            if (ImGui::Checkbox("Tag Interpolated Frames", &tagInterpolatedFrames))
+                            {
+                                Config::Instance()->XeFGDebugTagInterpolatedFrames = tagInterpolatedFrames;
+                                LOG_DEBUG("Set XeFGDebugTagInterpolatedFrames: {}", tagInterpolatedFrames);
+
+                                if (State::Instance().XeFgSwapChain != nullptr && XeFGProxy::EnableDebugFeature())
+                                    XeFGProxy::EnableDebugFeature()(State::Instance().XeFgSwapChain,
+                                        XEFG_SWAPCHAIN_DEBUG_FEATURE_TAG_INTERPOLATED_FRAMES, tagInterpolatedFrames ? 1 : 0, nullptr);
+                            }
+                            ShowHelpMarker("Add visual markers to generated frames");
+
+                            bool presentFailedInterpolation = Config::Instance()->XeFGDebugPresentFailedInterpolation.value_or_default();
+                            if (ImGui::Checkbox("Present Failed Interpolation", &presentFailedInterpolation))
+                            {
+                                Config::Instance()->XeFGDebugPresentFailedInterpolation = presentFailedInterpolation;
+                                LOG_DEBUG("Set XeFGDebugPresentFailedInterpolation: {}", presentFailedInterpolation);
+
+                                if (State::Instance().XeFgSwapChain != nullptr && XeFGProxy::EnableDebugFeature())
+                                    XeFGProxy::EnableDebugFeature()(State::Instance().XeFgSwapChain,
+                                        XEFG_SWAPCHAIN_DEBUG_FEATURE_PRESENT_FAILED_INTERPOLATION, presentFailedInterpolation ? 1 : 0, nullptr);
+                            }
+                            ShowHelpMarker("Show black frames when interpolation fails");
+
+                            // Last present status information
+                            if (State::Instance().XeFgSwapChain != nullptr)
+                            {
+                                ImGui::Spacing();
+                                ImGui::Text("Last Present Status:");
+
+                                // Get present status
+                                xefg_swapchain_present_status_t status = {};
+                                if (XeFGProxy::GetLastPresentStatus())
+                                    XeFGProxy::GetLastPresentStatus()(State::Instance().XeFgSwapChain, &status);
+
+                                ImGui::Text("Frames Presented: %d", status.framesPresented);
+                                ImGui::Text("Frame Gen Enabled: %s", status.isFrameGenEnabled ? "Yes" : "No");
+
+                                // Result code
+                                ImGui::Text("Result: ");
+                                ImGui::SameLine();
+
+                                // Color the result based on success/warning/error
+                                if (status.frameGenResult == XEFG_SWAPCHAIN_RESULT_SUCCESS)
+                                    ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "Success");
+                                else if (status.frameGenResult > 0) // Warning
+                                    ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.0f, 1.0f), "%s", XeFGProxy::ResultToString(status.frameGenResult).c_str());
+                                else if (status.frameGenResult < 0) // Error
+                                    ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), "%s", XeFGProxy::ResultToString(status.frameGenResult).c_str());
+                            }
+                        }
+                    }
+                    else if (currentFeature == nullptr)
+                    {
+                        ImGui::Text("Upscaler is not active");
+                    }
+                    else if (!xeFgAvailable)
+                    {
+                        ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), "Intel XeSS-FG libraries not available!");
+                        ImGui::Text("Please ensure libxess_fg.dll and libxell.dll are in the game folder.");
                     }
                 }
                 // DLSSG Mod

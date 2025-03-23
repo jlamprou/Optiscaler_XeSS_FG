@@ -187,7 +187,7 @@ static HRESULT hkFGPresent(void* This, UINT SyncInterval, UINT Flags)
 
 static HRESULT Present(IDXGISwapChain* pSwapChain, UINT SyncInterval, UINT Flags, const DXGI_PRESENT_PARAMETERS* pPresentParameters, IUnknown* pDevice, HWND hWnd)
 {
-    LOG_DEBUG("{}", _frameCounter);
+    LOG_DEBUG("Present Frame {}", _frameCounter);
 
     HRESULT presentResult;
 
@@ -352,9 +352,9 @@ static HRESULT Present(IDXGISwapChain* pSwapChain, UINT SyncInterval, UINT Flags
 
         return presentResult;
     }
-
+    LOG_DEBUG("MenuOverlayDx::Present {}", _frameCounter);
     MenuOverlayDx::Present(pSwapChain, SyncInterval, Flags, pPresentParameters, pDevice, hWnd);
-
+    LOG_DEBUG("MenuOverlayDx::Present {}", _frameCounter);
     if (Config::Instance()->FGUseFGSwapChain.value_or_default())
     {
         fakenvapi::reportFGPresent(pSwapChain, fg != nullptr && fg->IsActive(), _frameCounter % 2);

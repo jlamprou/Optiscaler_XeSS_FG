@@ -450,11 +450,12 @@ static void RenderImGui_DX12(IDXGISwapChain* pSwapChainPlain)
 
             if (io.Fonts->IsDirty())
                 ImGui_ImplDX12_UpdateFontsTexture();
-
+            LOG_DEBUG("Reached RenderMenu");
             if (MenuOverlayBase::RenderMenu())
             {
+                LOG_DEBUG("Reached ImGui::Render()");
                 ImGui::Render();
-
+                LOG_DEBUG("ended ImGui::Render()");
                 UINT backBufferIdx = pSwapChain->GetCurrentBackBufferIndex();
                 ID3D12CommandAllocator* commandAllocator = g_commandAllocators[backBufferIdx];
 
@@ -508,6 +509,7 @@ static void RenderImGui_DX12(IDXGISwapChain* pSwapChainPlain)
         }
         else
         {
+            LOG_DEBUG("Reached RenderMenu else");
             if (_showRenderImGuiDebugOnce)
                 LOG_INFO("!(ImGui::GetCurrentContext() && currentSCCommandQueue && g_mainRenderTargetResource[0])");
 
@@ -515,10 +517,12 @@ static void RenderImGui_DX12(IDXGISwapChain* pSwapChainPlain)
             _showRenderImGuiDebugOnce = false;
         }
     }
+    LOG_DEBUG("END Render");
 
     pSwapChain->Release();
-}
+    LOG_DEBUG("END Render Released");
 
+}
 ID3D12GraphicsCommandList* MenuOverlayDx::MenuCommandList()
 {
     return g_pd3dCommandList;
@@ -543,7 +547,7 @@ void MenuOverlayDx::Present(IDXGISwapChain* pSwapChain, UINT SyncInterval, UINT 
     ID3D12CommandQueue* cq = nullptr;
     ID3D11Device* device = nullptr;
     ID3D12Device* device12 = nullptr;
-
+    LOG_DEBUG("MenuOverlayDx::Present  try to obtain directx objects and find the path");
     // try to obtain directx objects and find the path
     if (pDevice->QueryInterface(IID_PPV_ARGS(&device)) == S_OK)
     {
@@ -568,6 +572,7 @@ void MenuOverlayDx::Present(IDXGISwapChain* pSwapChain, UINT SyncInterval, UINT 
             _dx12Device = true;
         }
     }
+    LOG_DEBUG("MenuOverlayDx::Present Process window handle changed, update base");
 
     // Process window handle changed, update base
     if (MenuOverlayBase::Handle() != hWnd)
@@ -581,6 +586,7 @@ void MenuOverlayDx::Present(IDXGISwapChain* pSwapChain, UINT SyncInterval, UINT 
 
         _isInited = false;
     }
+    LOG_DEBUG("MenuOverlayDx::Present Init");
 
     // Init
     if (!_isInited)
@@ -613,12 +619,14 @@ void MenuOverlayDx::Present(IDXGISwapChain* pSwapChain, UINT SyncInterval, UINT 
             _isInited = true;
         }
     }
+    LOG_DEBUG("MenuOverlayDx::Present Render menu");
 
     // Render menu
     if (_dx11Device)
         RenderImGui_DX11(pSwapChain);
     else if (_dx12Device)
         RenderImGui_DX12(pSwapChain);
+    LOG_DEBUG("MenuOverlayDx::Present release used objects");
 
     // release used objects
     if (cq != nullptr)
@@ -629,5 +637,7 @@ void MenuOverlayDx::Present(IDXGISwapChain* pSwapChain, UINT SyncInterval, UINT 
 
     if (device12 != nullptr)
         device12->Release();
+    LOG_DEBUG("MenuOverlayDx::Present END");
+
 }
 
